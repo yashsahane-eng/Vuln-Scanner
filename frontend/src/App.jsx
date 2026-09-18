@@ -47,7 +47,8 @@ export default function App() {
     ])
     
     try {
-      const res = await fetch('/api/scan', {
+      const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+      const res = await fetch(`${apiBase}/api/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: targetUrl, confirmation })
@@ -63,8 +64,20 @@ export default function App() {
       setTarget(targetUrl)
       setPhase('scanning')
       
-      // WebSocket connection — use Vite proxy path /ws
-      const wsUrl = `ws://${window.location.host}/ws/${data.scan_id}?target=${encodeURIComponent(targetUrl)}`
+      // Derive WebSocket connection URL
+      let wsUrl
+      if (import.meta.env.VITE_WS_URL) {
+        const base = import.meta.env.VITE_WS_URL.replace(/\/$/, '')
+        wsUrl = `${base}/ws/${data.scan_id}?target=${encodeURIComponent(targetUrl)}`
+      } else if (apiBase) {
+        const parsed = new URL(apiBase)
+        const wsProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:'
+        wsUrl = `${wsProto}//${parsed.host}/ws/${data.scan_id}?target=${encodeURIComponent(targetUrl)}`
+      } else {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        wsUrl = `${wsProto}//${window.location.host}/ws/${data.scan_id}?target=${encodeURIComponent(targetUrl)}`
+      }
+
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
       
@@ -177,6 +190,7 @@ export default function App() {
           riskScore={riskScore}
           scanId={scanId}
           target={target}
+          apiBase={(import.meta.env.VITE_API_URL || '').replace(/\/$/, '')}
           onReset={resetScan}
         />
       )}

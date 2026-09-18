@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import RiskScore from './RiskScore'
 
-export default function ReportView({ findings, riskScore, scanId, target, onReset }) {
+export default function ReportView({ findings, riskScore, scanId, target, apiBase = '', onReset }) {
   const [expandedModules, setExpandedModules] = useState({
     port_scan: true,
     headers: true,
@@ -122,10 +122,10 @@ export default function ReportView({ findings, riskScore, scanId, target, onRese
       <div className="report-actions">
         {scanId && (
           <>
-            <a href={`/api/report/${scanId}/json`} target="_blank" rel="noreferrer" className="download-btn">
+            <a href={`${apiBase}/api/report/${scanId}/json`} target="_blank" rel="noreferrer" className="download-btn">
               &gt; EXPORT JSON REPORT_
             </a>
-            <a href={`/api/report/${scanId}/html`} target="_blank" rel="noreferrer" className="download-btn">
+            <a href={`${apiBase}/api/report/${scanId}/html`} target="_blank" rel="noreferrer" className="download-btn">
               &gt; EXPORT HTML REPORT_
             </a>
           </>

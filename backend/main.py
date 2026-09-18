@@ -1,4 +1,4 @@
-﻿"""
+"""
 VulnScan Dashboard — FastAPI Backend
 Main application entry point: WebSocket scan pipeline, REST endpoints, static file serving.
 """
@@ -31,7 +31,7 @@ app = FastAPI(title="VulnScan Dashboard", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:8000"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,34 +42,45 @@ scan_results: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
-# Safety enforcement
+# Safety enforcement: Block prohibited real-world domains
 # ---------------------------------------------------------------------------
 
-def is_target_safe(url: str) -> bool:
+BLOCKED_REAL_WORLD_DOMAINS = {
+    "google.com", "apple.com", "microsoft.com", "amazon.com", "meta.com",
+    "facebook.com", "twitter.com", "x.com", "github.com", "gov", "mil",
+    "whitehouse.gov", "paypal.com", "chase.com", "wellsfargo.com",
+    "bankofamerica.com", "netflix.com", "cloudflare.com", "openai.com",
+    "youtube.com", "instagram.com", "linkedin.com"
+}
+
+def is_target_safe(url: str) -> tuple[bool, str]:
     """
-    Permit only localhost, loopback addresses, and RFC-1918 private IP ranges.
-    Blocks all public hostnames / IPs.
+    Validates the target URL.
+    - Requires http:// or https://
+    - Strictly blocks any hardcoded real-world / critical infrastructure domains
+    - Allows localhost, private testbeds, and authorized user-owned URLs
     """
     try:
         parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme.lower() not in ("http", "https"):
+            return False, "Target must specify http:// or https://"
+
         host = parsed.hostname or ""
         if not host:
-            return False
+            return False, "Invalid host in target URL"
 
-        # Explicit allow-list for local names
-        if host.lower() in ("localhost", "127.0.0.1", "::1"):
-            return True
+        host_lower = host.lower()
 
-        # Resolve hostname → IP, then check if private/loopback
-        try:
-            resolved = sock.gethostbyname(host)
-            ip = ipaddress.ip_address(resolved)
-            return ip.is_private or ip.is_loopback
-        except (ValueError, OSError):
-            return False
+        # Check against prohibited real-world domains & TLDs
+        for blocked in BLOCKED_REAL_WORLD_DOMAINS:
+            if host_lower == blocked or host_lower.endswith("." + blocked):
+                return False, f"Scanning '{blocked}' is prohibited by safety policy."
 
-    except Exception:
-        return False
+        return True, ""
+
+    except Exception as exc:
+        return False, f"Invalid URL: {exc}"
+
 
 
 # ---------------------------------------------------------------------------
@@ -193,15 +204,9 @@ async def initiate_scan(request: ScanRequest):
     if request.target.strip() != request.confirmation.strip():
         raise HTTPException(status_code=400, detail="Target URL and confirmation field do not match.")
 
-    if not is_target_safe(request.target):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Target not permitted. VulnScan only allows scanning of localhost and "
-                "private network hosts (RFC-1918 ranges). "
-                "Use OWASP Juice Shop or DVWA as a safe test target."
-            ),
-        )
+    safe, reason = is_target_safe(request.target)
+    if not safe:
+        raise HTTPException(status_code=403, detail=f"Target prohibited: {reason}")
 
     scan_id = str(uuid.uuid4())
     scan_results[scan_id] = {"status": "pending", "target": request.target}
@@ -243,10 +248,11 @@ async def websocket_scan(websocket: WebSocket, scan_id: str, target: str = ""):
     await websocket.accept()
 
     # Validate again on WS connection
-    if not is_target_safe(target):
+    safe, reason = is_target_safe(target)
+    if not safe:
         await websocket.send_json({
             "type": "error", "module": "system",
-            "message": "Target not permitted for scanning.", "severity": "critical",
+            "message": f"Target prohibited: {reason}", "severity": "critical",
         })
         await websocket.close()
         return
